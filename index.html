@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Scratch スマート・オシロスコープ データ生成</title>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: 30px auto; padding: 20px; background: #1e1e1e; color: #fff; border-radius: 8px; }
+        h1 { color: #4c97ff; font-size: 20px; text-align: center; }
+        .box { background: #2d2d2d; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
+        label { display: block; margin-bottom: 8px; font-size: 13px; font-weight: bold; }
+        input[type="file"] { width: 100%; padding: 10px; background: #3c3c3c; color: white; border: none; border-radius: 4px; box-sizing: border-box; }
+        .range-container { display: flex; align-items: center; gap: 10px; }
+        input[type="range"] { flex: 1; }
+        .val-disp { font-family: monospace; font-size: 14px; color: #4c97ff; min-width: 60px; text-align: right; }
+        button { width: 100%; padding: 15px; background: #4c97ff; color: white; border: none; border-radius: 4px; font-size: 16px; font-weight: bold; cursor: pointer; }
+        button:hover { background: #3380ea; }
+        #status { margin-top: 15px; text-align: center; color: #4eff8a; white-space: pre-line; line-height: 1.5; }
+        .note { font-size: 12px; color: #aaa; margin-top: 5px; }
+    </style>
+</head>
+<body>
+
+    <h1>スマート・オシロスコープ データ生成</h1>
+    
+    <div class="box">
+        <label>1. 音声ファイルを選択:</label>
+        <input type="file" id="audioFile" accept="audio/*">
+        <div class="note">※縦幅（振幅）とトリガー感度は自動で最適化されます。</div>
+    </div>
+
+    <div class="box">
+        <label>2. 1コマの秒数 (タイムディビジョン):</label>
+        <div class="range-container">
+            <input type="range" id="timeStep" min="0.002" max="0.050" step="0.001" value="0.016">
+            <span id="timeStepVal" class="val-disp">0.016秒</span>
+        </div>
+        <div class="note">※波形が詰まりすぎている時は短く、間延びしている時は長くしてね。</div>
+    </div>
+
+    <button id="processBtn">データを抽出してダウンロード</button>
+    <div id="status">ファイルを選択してボタンを押してください。</div>
+
+    <script>
+        const timeStepEl = document.getElementById('timeStep');
+        const timeStepValEl = document.getElementById('timeStepVal');
+        timeStepEl.addEventListener('input', () => {
+            timeStepValEl.innerText = timeStepEl.value + '秒';
+        });
+
+        document.getElementById('processBtn').addEventListener('click', async () => {
+            const fileInput = document.getElementById('audioFile');
+            const status = document.getElementById('status');
+            if (!fileInput.files.length) return status.innerText = 'エラー: ファイルを選択してね！';
+
+            const file = fileInput.files[0];
+            const targetDuration = parseFloat(timeStepEl.value);
+
+            status.innerText = '音声を解析中... (振幅・トリガー自動計算)';
+
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const arrayBuffer = await file.arrayBuffer();
+                const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+                
+                const rawData = audioBuffer.getChannelData(0);
+                const sampleRate = audioBuffer.sampleRate;
+                
+                // --- 全自動オプティマイザ（振幅とトリガーのみ） ---
+                let maxPeak = 0;
+                for (let i = 0; i < rawData.length; i++) {
+                    const absVal = Math.abs(rawData[i]);
+                    if (absVal > maxPeak) maxPeak = absVal;
+                }
+                
+                const amp = maxPeak > 0 ? 150 / maxPeak : 1;
+                const threshold = maxPeak * 0.08;
+
+                const totalSamplesInFrame = targetDuration * sampleRate;
+                const step = totalSamplesInFrame / 480;
+
+                let resultText = '';
+                let currentIndex = 0;
+                let frameCount = 0;
+                const fps30Samples = Math.floor(0.0333 * sampleRate);
+
+                while (currentIndex < rawData.length - totalSamplesInFrame) {
+                    let triggerIndex = currentIndex;
+                    let foundTrigger = false;
+
+                    for (let i = currentIndex; i < currentIndex + fps30Samples && i < rawData.length - totalSamplesInFrame; i++) {
+                        if (rawData[i] < threshold && rawData[i + 1] >= threshold) {
+                            triggerIndex = i + 1;
+                            foundTrigger = true;
+                            break;
+                        }
+                    }
+
+                    const startPos = foundTrigger ? triggerIndex : currentIndex;
+                    let frameArray = [];
+                    for (let j = 0; j < 480; j++) {
+                        const samplePos = Math.floor(startPos + (j * step));
+                        if (samplePos < rawData.length) {
+                            frameArray.push((rawData[samplePos] * amp).toFixed(1));
+                        } else {
+                            frameArray.push("0.0");
+                        }
+                    }
+
+                    resultText += frameArray.join('/') + '\n';
+                    frameCount++;
+                    currentIndex = startPos + fps30Samples;
+                }
+
+                const blob = new Blob([resultText], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = file.name.split('.')[0] + '_smart_data.txt';
+                document.body.appendChild(a);
+                a.click();
+                
+                status.innerText = `完了！\n${frameCount} フレームの波形を出力したよ。\n（1コマ: ${targetDuration}秒, 自動倍率: x${amp.toFixed(1)}）`;
+            } catch (error) {
+                status.innerText = 'エラーが発生したよ。別の音声ファイルで試してみて。';
+                console.error(error);
+            }
+        });
+    </script>
+</body>
+</html>
