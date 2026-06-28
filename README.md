@@ -1,4 +1,4 @@
-# Cho-OscilloscopeToScratch
+# OscilloscopeToScratch
 
 https://scratch.mit.edu/projects/1337432530/ で使う道具です。
 
