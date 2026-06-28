@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Scratch スマート・オシロスコープ データ生成 (時間軸完全固定版)</title>
+    <title>Scratch スマート・オシロスコープ データ生成 (タイマー完全同期版)</title>
     <style>
         body { font-family: sans-serif; max-width: 600px; margin: 30px auto; padding: 20px; background: #1e1e1e; color: #fff; border-radius: 8px; }
         h1 { color: #4c97ff; font-size: 20px; text-align: center; }
@@ -20,7 +20,7 @@
 </head>
 <body>
 
-    <h1>スマート・オシロスコープ (時間軸完全固定版)</h1>
+    <h1>スマート・オシロスコープ (タイマー完全同期版)</h1>
     
     <div class="box">
         <label>1. 音声ファイルを選択:</label>
@@ -45,8 +45,8 @@
 
     <div class="box">
         <label>4. 出力フレームレート (FPS):</label>
-        <input type="number" id="fpsSetting" min="1" max="250" value="60">
-        <div class="note">※TurboWarpで設定するFPSと同じ数字を入れてね！(1〜250)</div>
+        <input type="number" id="fpsSetting" min="1" max="250" value="30">
+        <div class="note">※Scratch側で「タイマー * FPS」にする、そのFPSと同じ数を入れてね！</div>
     </div>
 
     <button id="processBtn">データを抽出してダウンロード</button>
@@ -71,10 +71,6 @@
             const resolution = parseInt(resStepEl.value);
             const targetFPS = parseInt(document.getElementById('fpsSetting').value);
 
-            if (targetFPS < 1 || targetFPS > 250) {
-                return status.innerText = 'エラー: FPSは1から250の間で入力してね！';
-            }
-
             status.innerText = `音声を解析中... (${targetFPS}FPS用に処理中)`;
 
             try {
@@ -92,38 +88,31 @@
                 }
                 
                 const amp = maxPeak > 0 ? 150 / maxPeak : 1;
-                const threshold = maxPeak * 0.02; // やや低めの使いやすい閾値
+                const threshold = maxPeak * 0.01; // 微小な音でも同期を逃さない
 
                 const totalSamplesInFrame = targetDuration * sampleRate;
                 const step = totalSamplesInFrame / resolution;
-                
-                // 【最重要】1フレームあたりの純粋なサンプル進捗量（これは絶対に変更しない）
                 const fpsSamples = sampleRate / targetFPS; 
 
                 let resultLines = [];
                 let frameCount = 0;
 
                 while (true) {
-                    // 正確な時間軸上の中心位置を計算
+                    // Scratchの 「floor(タイマー * FPS)」 と100%同じ位置を正確に割り出す
                     const baseIndex = Math.floor(frameCount * fpsSamples);
-                    
-                    // 音声データの末尾に達したら終了
                     if (baseIndex >= rawData.length - totalSamplesInFrame) break;
 
                     let drawStartPos = baseIndex;
+                    const searchRange = Math.min(Math.floor(fpsSamples * 0.5), Math.floor(sampleRate * 0.015));
 
-                    // トリガーを検索する範囲（現在の位置から1フレーム分の進捗の半分、または最大0.02秒分）
-                    const searchRange = Math.min(Math.floor(fpsSamples * 0.5), Math.floor(sampleRate * 0.02));
-
-                    // 時間軸のベース位置から少し前方を探し、トリガーを探す
+                    // トリガー検知（描画位置だけをわずかに補正し、全体の時間軸は一切ズラさない）
                     for (let i = baseIndex; i < baseIndex + searchRange && i < rawData.length - totalSamplesInFrame; i++) {
                         if (rawData[i] < threshold && rawData[i + 1] >= threshold) {
-                            drawStartPos = i + 1; // 見つかったらその位置を描画開始位置にする
+                            drawStartPos = i + 1;
                             break;
                         }
                     }
 
-                    // 波形データを抽出
                     let frameArray = [];
                     for (let j = 0; j < resolution; j++) {
                         const samplePos = Math.floor(drawStartPos + (j * step));
@@ -134,8 +123,6 @@
                         }
                     }
                     resultLines.push(frameArray.join('/'));
-
-                    // 次のフレームへ（全体の時間軸はトリガーの有無に関係なく、完全に等速で進む）
                     frameCount++;
                 }
 
@@ -149,7 +136,7 @@
                 
                 status.innerText = `完了！\n${resultLines.length} フレーム（${targetFPS}FPS）を出力したよ。`;
             } catch (error) {
-                status.innerText = 'エラーが発生したよ。別の音声ファイルで試してみて。';
+                status.innerText = 'エラーが発生したよ。';
                 console.error(error);
             }
         });
