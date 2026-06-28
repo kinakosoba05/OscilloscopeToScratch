@@ -2,13 +2,13 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Scratch スマート・オシロスコープ データ生成 (軽量化版)</title>
+    <title>Scratch スマート・オシロスコープ データ生成 (限界突破FPS対応版)</title>
     <style>
         body { font-family: sans-serif; max-width: 600px; margin: 30px auto; padding: 20px; background: #1e1e1e; color: #fff; border-radius: 8px; }
         h1 { color: #4c97ff; font-size: 20px; text-align: center; }
         .box { background: #2d2d2d; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
         label { display: block; margin-bottom: 8px; font-size: 13px; font-weight: bold; }
-        input[type="file"] { width: 100%; padding: 10px; background: #3c3c3c; color: white; border: none; border-radius: 4px; box-sizing: border-box; }
+        input[type="file"], input[type="number"] { width: 100%; padding: 10px; background: #3c3c3c; color: white; border: none; border-radius: 4px; box-sizing: border-box; }
         .range-container { display: flex; align-items: center; gap: 10px; }
         input[type="range"] { flex: 1; }
         .val-disp { font-family: monospace; font-size: 14px; color: #4c97ff; min-width: 60px; text-align: right; }
@@ -20,21 +20,19 @@
 </head>
 <body>
 
-    <h1>スマート・オシロスコープ (軽量化版)</h1>
+    <h1>スマート・オシロスコープ (限界突破FPS対応版)</h1>
     
     <div class="box">
         <label>1. 音声ファイルを選択:</label>
         <input type="file" id="audioFile" accept="audio/*">
-        <div class="note">※縦幅（振幅）とトリガー感度は自動で最適化されます。</div>
     </div>
 
     <div class="box">
-        <label>2. 1コマの秒数 (タイムディビジョン):</label>
+        <label>2. 画面に表示する波の幅 (タイムディビジョン):</label>
         <div class="range-container">
             <input type="range" id="timeStep" min="0.002" max="0.050" step="0.001" value="0.016">
             <span id="timeStepVal" class="val-disp">0.016秒</span>
         </div>
-        <div class="note">※波形が詰まりすぎている時は短く、間延びしている時は長く。</div>
     </div>
 
     <div class="box">
@@ -43,24 +41,25 @@
             <input type="range" id="resStep" min="60" max="480" step="30" value="120">
             <span id="resStepVal" class="val-disp">120</span>
         </div>
-        <div class="note">※480だとScratchがセーブエラーを起こします。120推奨。</div>
     </div>
 
-    <button id="processBtn">軽量化データを抽出してダウンロード</button>
+    <div class="box">
+        <label>4. 出力フレームレート (FPS):</label>
+        <input type="number" id="fpsSetting" min="1" max="250" value="60">
+        <div class="note">※TurboWarpで設定するフレームレートと同じ数字を入力してね！(最大250)</div>
+    </div>
+
+    <button id="processBtn">データを抽出してダウンロード</button>
     <div id="status">ファイルを選択してボタンを押してください。</div>
 
     <script>
         const timeStepEl = document.getElementById('timeStep');
         const timeStepValEl = document.getElementById('timeStepVal');
-        timeStepEl.addEventListener('input', () => {
-            timeStepValEl.innerText = timeStepEl.value + '秒';
-        });
+        timeStepEl.addEventListener('input', () => { timeStepValEl.innerText = timeStepEl.value + '秒'; });
 
         const resStepEl = document.getElementById('resStep');
         const resStepValEl = document.getElementById('resStepVal');
-        resStepEl.addEventListener('input', () => {
-            resStepValEl.innerText = resStepEl.value;
-        });
+        resStepEl.addEventListener('input', () => { resStepValEl.innerText = resStepEl.value; });
 
         document.getElementById('processBtn').addEventListener('click', async () => {
             const fileInput = document.getElementById('audioFile');
@@ -69,9 +68,14 @@
 
             const file = fileInput.files[0];
             const targetDuration = parseFloat(timeStepEl.value);
-            const resolution = parseInt(resStepEl.value); // 解像度を取得
+            const resolution = parseInt(resStepEl.value);
+            const targetFPS = parseInt(document.getElementById('fpsSetting').value);
 
-            status.innerText = '音声を解析中... (軽量化処理中)';
+            if (targetFPS < 1 || targetFPS > 250) {
+                return status.innerText = 'エラー: FPSは1から250の間で入力してね！';
+            }
+
+            status.innerText = `音声を解析中... (${targetFPS}FPS用に処理中)`;
 
             try {
                 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -81,29 +85,29 @@
                 const rawData = audioBuffer.getChannelData(0);
                 const sampleRate = audioBuffer.sampleRate;
                 
-                // --- 全自動オプティマイザ ---
                 let maxPeak = 0;
                 for (let i = 0; i < rawData.length; i++) {
                     const absVal = Math.abs(rawData[i]);
-                    if (absVal > maxPeak) maxPeak = absVal;
+                    if (maxPeak < absVal) maxPeak = absVal;
                 }
                 
                 const amp = maxPeak > 0 ? 150 / maxPeak : 1;
                 const threshold = maxPeak * 0.08;
 
                 const totalSamplesInFrame = targetDuration * sampleRate;
-                const step = totalSamplesInFrame / resolution; // 解像度に合わせてステップ幅を変更
+                const step = totalSamplesInFrame / resolution;
 
                 let resultText = '';
                 let currentIndex = 0;
                 let frameCount = 0;
-                const fps30Samples = Math.floor(0.0333 * sampleRate);
+                
+                const fpsSamples = sampleRate / targetFPS; 
 
                 while (currentIndex < rawData.length - totalSamplesInFrame) {
                     let triggerIndex = currentIndex;
                     let foundTrigger = false;
 
-                    for (let i = currentIndex; i < currentIndex + fps30Samples && i < rawData.length - totalSamplesInFrame; i++) {
+                    for (let i = Math.floor(currentIndex); i < Math.floor(currentIndex + fpsSamples) && i < rawData.length - totalSamplesInFrame; i++) {
                         if (rawData[i] < threshold && rawData[i + 1] >= threshold) {
                             triggerIndex = i + 1;
                             foundTrigger = true;
@@ -111,14 +115,12 @@
                         }
                     }
 
-                    const startPos = foundTrigger ? triggerIndex : currentIndex;
+                    const startPos = foundTrigger ? triggerIndex : Math.floor(currentIndex);
                     let frameArray = [];
                     
-                    // 480からresolution（例:120）に変更
                     for (let j = 0; j < resolution; j++) {
                         const samplePos = Math.floor(startPos + (j * step));
                         if (samplePos < rawData.length) {
-                            // Math.round で整数化して文字数を極限まで節約！
                             frameArray.push(Math.round(rawData[samplePos] * amp));
                         } else {
                             frameArray.push("0");
@@ -127,18 +129,19 @@
 
                     resultText += frameArray.join('/') + '\n';
                     frameCount++;
-                    currentIndex = startPos + fps30Samples;
+                    
+                    currentIndex += fpsSamples; 
                 }
 
                 const blob = new Blob([resultText], { type: 'text/plain' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = file.name.split('.')[0] + '_light_data.txt';
+                a.download = `${file.name.split('.')[0]}_${targetFPS}fps_data.txt`;
                 document.body.appendChild(a);
                 a.click();
                 
-                status.innerText = `完了！\n${frameCount} フレームの波形を出力したよ。\n（解像度: ${resolution}, データ量激減！）`;
+                status.innerText = `完了！\n${frameCount} フレーム（${targetFPS}FPS）を出力したよ。`;
             } catch (error) {
                 status.innerText = 'エラーが発生したよ。別の音声ファイルで試してみて。';
                 console.error(error);
