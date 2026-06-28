@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Scratch スマート・オシロスコープ データ生成 (限界突破FPS対応版)</title>
+    <title>Scratch スマート・オシロスコープ データ生成 (真・完全同期版)</title>
     <style>
         body { font-family: sans-serif; max-width: 600px; margin: 30px auto; padding: 20px; background: #1e1e1e; color: #fff; border-radius: 8px; }
         h1 { color: #4c97ff; font-size: 20px; text-align: center; }
@@ -20,7 +20,7 @@
 </head>
 <body>
 
-    <h1>スマート・オシロスコープ (限界突破FPS対応版)</h1>
+    <h1>スマート・オシロスコープ (真・完全同期版)</h1>
     
     <div class="box">
         <label>1. 音声ファイルを選択:</label>
@@ -46,7 +46,7 @@
     <div class="box">
         <label>4. 出力フレームレート (FPS):</label>
         <input type="number" id="fpsSetting" min="1" max="250" value="60">
-        <div class="note">※TurboWarpで設定するフレームレートと同じ数字を入力してね！(最大250)</div>
+        <div class="note">※TurboWarpで設定するFPSと同じ数字を入れてね！(1〜250)</div>
     </div>
 
     <button id="processBtn">データを抽出してダウンロード</button>
@@ -92,32 +92,34 @@
                 }
                 
                 const amp = maxPeak > 0 ? 150 / maxPeak : 1;
-                const threshold = maxPeak * 0.08;
+                const threshold = maxPeak * 0.03; // トリガー感度を少しシャープに
 
                 const totalSamplesInFrame = targetDuration * sampleRate;
                 const step = totalSamplesInFrame / resolution;
-
-                let resultText = '';
-                let currentIndex = 0;
-                let frameCount = 0;
-                
                 const fpsSamples = sampleRate / targetFPS; 
 
+                let resultLines = [];
+                let currentIndex = 0;
+                
+                // トリガーを探す範囲（1フレーム進む距離の半分、または最低でも0.02秒分）
+                const searchRange = Math.max(Math.floor(fpsSamples * 0.5), Math.floor(sampleRate * 0.02));
+
                 while (currentIndex < rawData.length - totalSamplesInFrame) {
-                    let triggerIndex = currentIndex;
+                    let startPos = Math.floor(currentIndex);
                     let foundTrigger = false;
 
-                    for (let i = Math.floor(currentIndex); i < Math.floor(currentIndex + fpsSamples) && i < rawData.length - totalSamplesInFrame; i++) {
+                    // 1. トリガーを探す
+                    for (let i = startPos; i < startPos + searchRange && i < rawData.length - totalSamplesInFrame; i++) {
+                        // 負から正へ閾値をまたいだ瞬間を検知
                         if (rawData[i] < threshold && rawData[i + 1] >= threshold) {
-                            triggerIndex = i + 1;
+                            startPos = i + 1;
                             foundTrigger = true;
                             break;
                         }
                     }
 
-                    const startPos = foundTrigger ? triggerIndex : Math.floor(currentIndex);
+                    // 2. 波形データを抽出
                     let frameArray = [];
-                    
                     for (let j = 0; j < resolution; j++) {
                         const samplePos = Math.floor(startPos + (j * step));
                         if (samplePos < rawData.length) {
@@ -126,14 +128,19 @@
                             frameArray.push("0");
                         }
                     }
+                    resultLines.push(frameArray.join('/'));
 
-                    resultText += frameArray.join('/') + '\n';
-                    frameCount++;
-                    
-                    currentIndex += fpsSamples; 
+                    // 3. 次のフレームの開始位置を決定（【超重要】ここを修正！）
+                    // トリガーが見つかった場合は「見つかった位置」から、
+                    // 見つからなかった場合は「現在の位置」から、正確に1フレーム分（fpsSamples）進める
+                    if (foundTrigger) {
+                        currentIndex = startPos + fpsSamples;
+                    } else {
+                        currentIndex = currentIndex + fpsSamples;
+                    }
                 }
 
-                const blob = new Blob([resultText], { type: 'text/plain' });
+                const blob = new Blob([resultLines.join('\n')], { type: 'text/plain' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
@@ -141,7 +148,7 @@
                 document.body.appendChild(a);
                 a.click();
                 
-                status.innerText = `完了！\n${frameCount} フレーム（${targetFPS}FPS）を出力したよ。`;
+                status.innerText = `完了！\n${resultLines.length} フレーム（${targetFPS}FPS）を出力したよ。`;
             } catch (error) {
                 status.innerText = 'エラーが発生したよ。別の音声ファイルで試してみて。';
                 console.error(error);
