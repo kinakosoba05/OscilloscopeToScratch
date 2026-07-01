@@ -122,7 +122,8 @@
                             frameArray.push("0");
                         }
                     }
-                    resultLines.push(frameArray.join('/'));
+                    // 各項目の末尾（最後の数字の後ろ）に半角スラッシュを一つ追加
+                    resultLines.push(frameArray.join('/') + '/');
                     frameCount++;
                 }
 
